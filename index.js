@@ -33,9 +33,21 @@ async function server() {
         const database = client.db("neuprompt_db");
         const promptsCollection = database.collection("prompts");
 
+        // Prompts 
         app.post('/api/prompts', async (req, res) => {
             const prompt = req.body;
             const result = await promptsCollection.insertOne(prompt);
+            res.send(result);
+        })
+
+
+        app.get('/api/my-prompts/:id', async (req, res) => {
+            const id = req.params.id;
+            const result = await promptsCollection
+                .find({
+                    creatorId: id
+                })
+                .toArray();
             res.send(result);
         })
 
