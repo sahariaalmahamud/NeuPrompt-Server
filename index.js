@@ -34,7 +34,7 @@ async function server() {
         const database = client.db("neuprompt_db");
         const promptsCollection = database.collection("prompts");
 
-        // Prompts 
+        // Post Prompts 
         app.post('/api/prompts', async (req, res) => {
             const prompt = req.body;
             const result = await promptsCollection.insertOne(prompt);
@@ -43,6 +43,7 @@ async function server() {
         })
 
 
+        //Get prompt by user id
         app.get('/api/my-prompts/:id', async (req, res) => {
             const id = req.params.id;
             const result = await promptsCollection
@@ -66,6 +67,7 @@ async function server() {
         })
 
 
+        // Get single prompt
         app.get('/api/prompts/:id', async (req, res) => {
             const id = req.params.id;
             const result =
@@ -77,6 +79,7 @@ async function server() {
         })
         
 
+        //Update prompt by user
         app.patch('/api/prompts/:id', async (req, res) => {
             const id = req.params.id;
             const updatedData = req.body;
