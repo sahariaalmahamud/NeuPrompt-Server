@@ -37,6 +37,7 @@ async function server() {
         app.post('/api/prompts', async (req, res) => {
             const prompt = req.body;
             const result = await promptsCollection.insertOne(prompt);
+
             res.send(result);
         })
 
@@ -48,6 +49,17 @@ async function server() {
                     creatorId: id
                 })
                 .toArray();
+
+            res.send(result);
+        })
+
+        app.get('/api/prompts', async (req, res) => {
+            const result = await promptsCollection
+                .find({
+                    status: "approved"
+                })
+                .toArray();
+
             res.send(result);
         })
 
