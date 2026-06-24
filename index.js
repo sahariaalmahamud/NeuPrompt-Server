@@ -77,7 +77,7 @@ async function server() {
 
             res.send(result);
         })
-        
+
 
         //Update prompt by user
         app.patch('/api/prompts/:id', async (req, res) => {
@@ -94,6 +94,18 @@ async function server() {
                 );
 
             res.send(result);
+        })
+
+
+        // Delete prompt
+        app.delete('/api/prompts/:id', async (req, res) => {
+            const id = req.params.id;
+            const result =
+                await promptsCollection.deleteOne({
+                    _id: new ObjectId(id)
+                });
+
+            res.json(result);
         })
 
         // Send a ping to confirm a successful connection
