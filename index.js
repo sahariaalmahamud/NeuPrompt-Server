@@ -33,6 +33,7 @@ async function server() {
 
         const database = client.db("neuprompt_db");
         const promptsCollection = database.collection("prompts");
+        const bookmarksCollection = database.collection("bookmarks");
 
         // Post Prompts 
         app.post('/api/prompts', async (req, res) => {
@@ -235,6 +236,127 @@ async function server() {
 
             res.send(result);
         })
+
+
+        // Bookmark post base on prompt 
+        app.post('/api/bookmarks', async (req, res) => {
+
+            const bookmark = req.body;
+
+            const exists =
+                await bookmarksCollection.findOne({
+                    userId: bookmark.userId,
+                    promptId: bookmark.promptId
+                });
+
+            if (exists) {
+                return res.send({
+                    success: false,
+                    message: "Already bookmarked"
+                });
+            }
+
+            await bookmarksCollection.insertOne({
+                ...bookmark,
+                createdAt: new Date()
+            });
+
+            await promptsCollection.updateOne(
+                {
+                    _id: new ObjectId(bookmark.promptId)
+                },
+                {
+                    $inc: {
+                        bookmarkCount: 1
+                    }
+                }
+            );
+
+            res.send({
+                success: true,
+                message: "Bookmarked successfully"
+            });
+
+        });
+
+        //Disable Duplicate Bookmark
+        app.get('/api/bookmarks/check/:userId/:promptId', async (req, res) => {
+            const { userId, promptId } = req.params;
+            const bookmark =
+                await bookmarksCollection.findOne({
+                    userId,
+                    promptId
+                });
+
+            res.send({
+                bookmarked: !!bookmark
+            });
+        });
+
+
+        // Remove Bookmark
+        app.delete('/api/bookmarks', async (req, res) => {
+            const { userId, promptId } = req.body;
+
+            await bookmarksCollection.deleteOne({
+                userId,
+                promptId
+            });
+
+            await promptsCollection.updateOne(
+                {
+                    _id: new ObjectId(promptId)
+                },
+                {
+                    $inc: {
+                        bookmarkCount: -1
+                    }
+                }
+            );
+
+            res.json({
+                success: true
+            });
+        });
+
+
+        //Saved bookmarks Prompts as userId
+        app.get('/api/bookmarks/:userId', async (req, res) => {
+            const userId = req.params.userId;
+
+            const result = await bookmarksCollection.aggregate([
+
+                {
+                    $match: {
+                        userId
+                    }
+                },
+
+                {
+                    $addFields: {
+                        promptObjectId: {
+                            $toObjectId: "$promptId"
+                        }
+                    }
+                },
+
+                {
+                    $lookup: {
+                        from: "prompts",
+                        localField: "promptObjectId",
+                        foreignField: "_id",
+                        as: "prompt"
+                    }
+                },
+
+                {
+                    $unwind: "$prompt"
+                }
+
+            ]).toArray();
+
+            res.send(result);
+        });
 
 
         // Send a ping to confirm a successful connection
