@@ -185,7 +185,26 @@ async function server() {
         })
 
 
+        // Delete prompt by admin
+        app.delete('/api/admin/prompts/:id', async (req, res) => {
+            const id = req.params.id;
 
+            const result = await promptsCollection.deleteOne({
+                _id: new ObjectId(id)
+            });
+
+            if (result.deletedCount === 0) {
+                return res.status(404).send({
+                    success: false,
+                    message: "Prompt not found"
+                });
+            }
+
+            res.send({
+                success: true,
+                message: "Prompt deleted successfully"
+            });
+        });
 
 
         // Send a ping to confirm a successful connection
