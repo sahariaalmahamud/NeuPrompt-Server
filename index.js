@@ -185,6 +185,17 @@ async function server() {
         })
 
 
+        // Home featured prompt
+        app.get('/api/featured-prompts', async (req, res) => {
+            const result = await promptsCollection.find({
+                featured: true,
+                status: "approved"
+            }).limit(6).toArray();
+
+            res.send(result);
+        })
+
+
         // Delete prompt by admin
         app.delete('/api/admin/prompts/:id', async (req, res) => {
             const id = req.params.id;
@@ -205,6 +216,25 @@ async function server() {
                 message: "Prompt deleted successfully"
             });
         });
+
+
+        // Copy prompt
+        app.patch('/api/prompts/:id/copy', async (req, res) => {
+            const id = req.params.id;
+            const result =
+                await promptsCollection.updateOne(
+                    {
+                        _id: new ObjectId(id)
+                    },
+                    {
+                        $inc: {
+                            copyCount: 1
+                        }
+                    }
+                );
+
+            res.send(result);
+        })
 
 
         // Send a ping to confirm a successful connection
