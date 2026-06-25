@@ -165,6 +165,29 @@ async function server() {
             res.send(result);
         })
 
+
+        // Home page featured section control by Admin
+        app.patch('/api/admin/prompts/:id/feature', async (req, res) => {
+            const id = req.params.id;
+            const result =
+                await promptsCollection.updateOne(
+                    {
+                        _id: new ObjectId(id)
+                    },
+                    {
+                        $set: {
+                            featured: true
+                        }
+                    }
+                );
+
+            res.send(result);
+        })
+
+
+
+
+
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
