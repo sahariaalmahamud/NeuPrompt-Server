@@ -108,6 +108,20 @@ async function server() {
             res.json(result);
         })
 
+
+        // Get Admin All Prompts
+        app.get('/api/admin/prompts', async (req, res) => {
+            const result =
+                await promptsCollection
+                    .find()
+                    .sort({
+                        createdAt: -1
+                    })
+                    .toArray();
+
+            res.send(result);
+        })
+
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
