@@ -375,6 +375,16 @@ async function server() {
             });
         });
 
+
+        // get reviews by promptId
+        app.get("/api/reviews/:promptId", async (req, res) => {
+            const promptId = req.params.promptId;
+
+            const reviews = await reviewsCollection.find({ promptId }).sort({ createdAt: -1 }).toArray();
+
+            res.send(reviews);
+        });
+
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
