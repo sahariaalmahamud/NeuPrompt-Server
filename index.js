@@ -34,6 +34,7 @@ async function server() {
         const database = client.db("neuprompt_db");
         const promptsCollection = database.collection("prompts");
         const bookmarksCollection = database.collection("bookmarks");
+        const reviewsCollection = database.collection("reviews");
 
         // Post Prompts 
         app.post('/api/prompts', async (req, res) => {
@@ -358,6 +359,21 @@ async function server() {
             res.send(result);
         });
 
+
+        // post reviews
+        app.post("/api/reviews", async (req, res) => {
+            const review = {
+                ...req.body,
+                createdAt: new Date()
+            };
+
+            const result = await reviewsCollection.insertOne(review);
+
+            res.send({
+                success: true,
+                insertedId: result.insertedId
+            });
+        });
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
