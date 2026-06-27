@@ -1,6 +1,8 @@
 const express = require("express");
 const dotenv = require("dotenv");
+const Stripe = require("stripe");
 dotenv.config();
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const cors = require("cors");
 const {
@@ -32,9 +34,12 @@ async function server() {
         await client.connect();
 
         const database = client.db("neuprompt_db");
+        const usersCollection = database.collection("user");
         const promptsCollection = database.collection("prompts");
         const bookmarksCollection = database.collection("bookmarks");
         const reviewsCollection = database.collection("reviews");
+        const reportsCollection = database.collection("reports");
+        const transactionsCollection = database.collection("transactions");
 
         // Post Prompts 
         app.post('/api/prompts', async (req, res) => {
@@ -383,6 +388,205 @@ async function server() {
             const reviews = await reviewsCollection.find({ promptId }).sort({ createdAt: -1 }).toArray();
 
             res.send(reviews);
+        });
+
+
+        //report post 
+        app.post("/api/reports", async (req, res) => {
+            const report = req.body;
+            report.status = "pending";
+            report.createdAt = new Date();
+            const result = await reportsCollection.insertOne(report);
+
+            res.send(result);
+        });
+
+
+        //get reports
+        app.get("/api/reports", async (req, res) => {
+            const reports = await reportsCollection.aggregate([
+                // Prompt
+                {
+                    $lookup: {
+                        from: "prompts",
+                        let: {
+                            promptId: {
+                                $toObjectId: "$promptId"
+                            }
+                        },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $eq: [
+                                            "$_id",
+                                            "$$promptId"
+                                        ]
+                                    }
+                                }
+                            }
+                        ],
+                        as: "prompt"
+                    }
+                },
+
+                {
+                    $unwind: "$prompt"
+                },
+
+                // Reporter
+                {
+                    $lookup: {
+                        from: "user",
+                        let: {
+                            reporterId: {
+                                $toObjectId: "$reporterId"
+                            }
+                        },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $eq: [
+                                            "$_id",
+                                            "$$reporterId"
+                                        ]
+                                    }
+                                }
+                            }
+                        ],
+                        as: "reporter"
+                    }
+                },
+
+                {
+                    $unwind: "$reporter"
+                },
+
+                // Creator
+                {
+                    $lookup: {
+                        from: "user",
+                        let: {
+                            creatorId: {
+                                $toObjectId: "$creatorId"
+                            }
+                        },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $eq: [
+                                            "$_id",
+                                            "$$creatorId"
+                                        ]
+                                    }
+                                }
+                            }
+                        ],
+                        as: "creator"
+                    }
+                },
+
+                {
+                    $unwind: "$creator"
+                }
+
+            ]).toArray();
+
+            res.send(reports)
+        });
+
+
+        //post subscriptions
+        app.post("/api/subscriptions", async (req, res) => {
+            try {
+                const { sessionId } = req.body;
+                const session = await stripe.checkout.sessions.retrieve(
+                    sessionId,
+                    {
+                        expand: ["payment_intent"],
+                    }
+                );
+
+
+                // CHECK DUPLICATE PAYMENT
+                const exists = await transactionsCollection.findOne({
+                    stripeSessionId: session.id,
+                });
+
+                if (exists) {
+                    return res.send({
+                        success: true,
+                        message:
+                            "Subscription already processed.",
+                    });
+                }
+
+
+                // CREATE TRANSACTION
+                const transaction = {
+                    userId: session.metadata.userId,
+                    email: session.customer_details.email,
+                    plan: session.metadata.plan,
+                    amount: session.amount_total / 100,
+                    urrency: session.currency,
+                    stripeSessionId: session.id,
+                    stripePaymentIntentId: session.payment_intent?.id || null,
+                    paymentStatus: session.payment_status,
+                    createdAt: new Date(),
+                };
+
+                await transactionsCollection.insertOne(transaction);
+
+                // UPDATE USER
+                await usersCollection.updateOne(
+                    {
+                        _id: new ObjectId(session.metadata.userId),
+                    },
+
+                    {
+                        $set: {
+                            plan: "premium",
+                        },
+                    }
+                );
+
+                res.send({
+                    success: true,
+                    message:
+                        "Premium activated successfully.",
+                });
+            }
+
+            catch (error) {
+                console.log(error);
+                res.status(500).send({
+                    success: false,
+                    message:
+                        "Something went wrong.",
+                });
+            }
+        });
+
+
+        //get subscription user 
+        app.get("/api/subscriptions/:userId", async (req, res) => {
+            const { userId } = req.params;
+
+            const subscription = await transactionsCollection.findOne(
+                {
+                    userId,
+                    paymentStatus: "paid",
+                },
+
+                {
+                    sort: {
+                        createdAt: -1,
+                    }
+                }
+            );
+            res.send(subscription);
         });
 
         // Send a ping to confirm a successful connection
