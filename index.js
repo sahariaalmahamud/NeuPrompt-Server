@@ -10,6 +10,7 @@ const {
     ServerApiVersion,
     ObjectId,
 } = require("mongodb");
+const { jwtVerify, createRemoteJWKSet } = require("jose-cjs");
 
 app.use(cors());
 app.use(express.json());
@@ -28,6 +29,73 @@ const client = new MongoClient(uri, {
         deprecationErrors: true,
     }
 });
+
+const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+)
+
+const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization
+    if (!authHeader) {
+        return res.status(401).json({ message: "Unauthorized" })
+    }
+
+    const token = authHeader.split(" ")[1]
+    if (!token) {
+        return res.status(401).json({ message: "Unauthorized" })
+    }
+
+    try {
+        const { payload } = await jwtVerify(token, JWKS);
+        req.user = payload;
+        next();
+    }
+    catch (error) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+}
+
+const userVerify = (req, res, next) => {
+    if (req.dbUser.role !== "user") {
+        return res.status(403).json({
+            message: "Forbidden",
+        });
+    }
+
+    next();
+};
+
+const creatorVerify = (req, res, next) => {
+    if (req.dbUser.role !== "creator") {
+        return res.status(403).json({
+            message: "Forbidden",
+        });
+    }
+
+    next();
+};
+
+const adminVerify = (req, res, next) => {
+    if (req.dbUser.role !== "admin") {
+        return res.status(403).json({
+            message: "Forbidden",
+        });
+    }
+
+    next();
+};
+
+const premiumVerify = (req, res, next) => {
+    if (req.dbUser.plan !== "premium") {
+        return res.status(403).json({
+            message: "Premium subscription required",
+        });
+    }
+
+    next();
+};
+
+
 async function server() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -40,6 +108,24 @@ async function server() {
         const reviewsCollection = database.collection("reviews");
         const reportsCollection = database.collection("reports");
         const transactionsCollection = database.collection("transactions");
+
+        const verifyUser = async (req, res, next) => {
+            const authUser = req.user;
+
+            const dbUser = await usersCollection.findOne({
+                _id: new ObjectId(authUser.id),
+            });
+
+            if (!dbUser) {
+                return res.status(401).json({
+                    message: "Unauthorized",
+                });
+            }
+
+            req.dbUser = dbUser;
+
+            next();
+        };
 
         // Post Prompts 
         app.post('/api/prompts', async (req, res) => {
@@ -63,19 +149,130 @@ async function server() {
         })
 
 
-        app.get('/api/prompts', async (req, res) => {
+        app.get("/api/prompts", async (req, res) => {
+            const {
+                search,
+                category,
+                aiTool,
+                difficulty,
+                sort,
+                page = 1,
+                limit = 9,
+            } = req.query;
+
+            const query = {
+                status: "approved",
+            };
+
+            let sortQuery = {
+                createdAt: -1, // Default: Latest
+            };
+
+            const currentPage = Math.max(1, parseInt(page) || 1);
+
+            const perPage = Math.max(1, parseInt(limit) || 9);
+            const skip = (currentPage - 1) * perPage;
+
+
+
+            if (search) {
+                query.$or = [
+                    {
+                        title: {
+                            $regex: search,
+                            $options: "i",
+                        },
+                    },
+                    {
+                        aiTool: {
+                            $regex: search,
+                            $options: "i",
+                        },
+                    },
+                    // {
+                    //     category: {
+                    //         $regex: search,
+                    //         $options: "i",
+                    //     },
+                    // },
+                    {
+                        tags: {
+                            $in: [new RegExp(search, "i")],
+                        },
+                    },
+                ];
+            }
+
+            switch (sort) {
+                case "Latest":
+                    sortQuery = {
+                        createdAt: -1,
+                    };
+                    break;
+
+                case "Oldest":
+                    sortQuery = {
+                        createdAt: 1,
+                    };
+                    break;
+
+                case "Most Popular":
+                    sortQuery = {
+                        copyCount: -1,
+                    };
+                    break;
+
+                case "Most Copied":
+                    sortQuery = {
+                        copyCount: -1,
+                    };
+                    break;
+
+                case "Highest Rated":
+                    sortQuery = {
+                        rating: -1,
+                    };
+                    break;
+
+                default:
+                    sortQuery = {
+                        createdAt: -1,
+                    };
+            }
+
+            if (category && category !== "All") {
+                query.category = category;
+            }
+
+            if (aiTool && aiTool !== "All") {
+                query.aiTool = aiTool;
+            }
+
+
+            if (difficulty && difficulty !== "All") {
+                query.difficulty = difficulty;
+            }
+
+            const total = await promptsCollection.countDocuments(query);
+
             const result = await promptsCollection
-                .find({
-                    status: "approved"
-                })
+                .find(query)
+                .sort(sortQuery)
+                .skip(skip)
+                .limit(perPage)
                 .toArray();
 
-            res.send(result);
-        })
 
+            res.send({
+                prompts: result,
+                total,
+                currentPage,
+                totalPages: Math.ceil(total / perPage),
+            });
+        });
 
-        // Get single prompt
-        app.get('/api/prompts/:id', async (req, res) => {
+        // Get single prompt for details page
+        app.get('/api/prompts/:id', verifyToken, verifyUser, async (req, res) => {
             const id = req.params.id;
             const result =
                 await promptsCollection.findOne({
@@ -530,7 +727,7 @@ async function server() {
                     email: session.customer_details.email,
                     plan: session.metadata.plan,
                     amount: session.amount_total / 100,
-                    urrency: session.currency,
+                    currency: session.currency,
                     stripeSessionId: session.id,
                     stripePaymentIntentId: session.payment_intent?.id || null,
                     paymentStatus: session.payment_status,
