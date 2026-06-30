@@ -272,7 +272,7 @@ async function server() {
         });
 
         // Get single prompt for details page
-        app.get('/api/prompts/:id', verifyToken, verifyUser, async (req, res) => {
+        app.get('/api/prompts/:id', async (req, res) => {
             const id = req.params.id;
             const result =
                 await promptsCollection.findOne({
@@ -562,21 +562,88 @@ async function server() {
         });
 
 
-        // post reviews
         app.post("/api/reviews", async (req, res) => {
-            const review = {
-                ...req.body,
-                createdAt: new Date()
-            };
+            try {
+                const review = {
+                    ...req.body,
+                    rating: Number(req.body.rating),
+                    createdAt: new Date(),
+                };
 
-            const result = await reviewsCollection.insertOne(review);
+                // Check duplicate review
+                const existingReview = await reviewsCollection.findOne({
+                    promptId: review.promptId,
+                    userId: review.userId,
+                });
 
-            res.send({
-                success: true,
-                insertedId: result.insertedId
-            });
+                if (existingReview) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "You have already reviewed this prompt.",
+                    });
+                }
+
+                // Insert review
+                const result = await reviewsCollection.insertOne(review);
+
+                console.log("Review PromptId:", review.promptId);
+
+                // Get all reviews for this prompt
+                const reviews = await reviewsCollection
+                    .find({
+                        promptId: review.promptId,
+                    })
+                    .toArray();
+
+                console.log("Reviews:", reviews);
+
+                const totalRatings = reviews.length;
+                console.log("Total Ratings:", totalRatings);
+
+                const totalStars = reviews.reduce(
+                    (sum, item) => sum + Number(item.rating),
+                    0
+                );
+
+                console.log("Total Stars:", totalStars);
+
+                const averageRating = Number(
+                    (totalStars / totalRatings).toFixed(1)
+                );
+
+                console.log("Average Rating:", averageRating);
+
+                // Update prompt
+                const updateResult = await promptsCollection.updateOne(
+                    {
+                        _id: new ObjectId(review.promptId),
+                    },
+                    {
+                        $set: {
+                            rating: averageRating,
+                            totalRatings,
+                        },
+                    }
+                );
+
+
+
+                res.send({
+                    success: true,
+                    insertedId: result.insertedId,
+                    rating: averageRating,
+                    totalRatings,
+                });
+
+            } catch (error) {
+                console.error("Review Error:", error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to submit review.",
+                });
+            }
         });
-
 
         // get reviews by promptId
         app.get("/api/reviews/:promptId", async (req, res) => {
@@ -587,6 +654,246 @@ async function server() {
             res.send(reviews);
         });
 
+
+        app.get("/api/reviews/my/:userId", async (req, res) => {
+            try {
+                const userId = req.params.userId;
+
+                const reviews = await reviewsCollection.aggregate([
+                    {
+                        $match: {
+                            userId,
+                        },
+                    },
+
+                    {
+                        $addFields: {
+                            promptObjectId: {
+                                $toObjectId: "$promptId",
+                            },
+                        },
+                    },
+
+                    {
+                        $lookup: {
+                            from: "prompts",
+                            localField: "promptObjectId",
+                            foreignField: "_id",
+                            as: "prompt",
+                        },
+                    },
+
+                    {
+                        $unwind: "$prompt",
+                    },
+
+                    {
+                        $project: {
+                            _id: 1,
+                            userId: 1,
+                            userName: 1,
+                            userImage: 1,
+                            rating: 1,
+                            comment: 1,
+                            createdAt: 1,
+
+                            prompt: {
+                                _id: "$prompt._id",
+                                title: "$prompt.title",
+                                thumbnail: "$prompt.thumbnail",
+                                category: "$prompt.category",
+                                aiTool: "$prompt.aiTool",
+                                difficulty: "$prompt.difficulty",
+                                visibility: "$prompt.visibility",
+                                creatorId: "$prompt.creatorId",
+                                creatorName: "$prompt.creatorName",
+                            },
+                        },
+                    },
+
+                    {
+                        $sort: {
+                            createdAt: -1,
+                        },
+                    },
+                ]).toArray();
+
+                res.send(reviews);
+
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to fetch reviews",
+                });
+            }
+        });
+
+
+        app.get("/api/reviews/received/:creatorId", async (req, res) => {
+            try {
+                const creatorId = req.params.creatorId;
+
+                const reviews = await reviewsCollection.aggregate([
+                    {
+                        $addFields: {
+                            promptObjectId: {
+                                $toObjectId: "$promptId",
+                            },
+                        },
+                    },
+                    {
+                        $lookup: {
+                            from: "prompts",
+                            localField: "promptObjectId",
+                            foreignField: "_id",
+                            as: "prompt",
+                        },
+                    },
+                    {
+                        $unwind: "$prompt",
+                    },
+
+
+                    {
+                        $match: {
+                            "prompt.creatorId": creatorId,
+                        },
+                    },
+
+                    {
+                        $project: {
+                            _id: 1,
+                            userId: 1,
+                            userName: 1,
+                            userImage: 1,
+                            rating: 1,
+                            comment: 1,
+                            createdAt: 1,
+
+                            prompt: {
+                                _id: "$prompt._id",
+                                title: "$prompt.title",
+                                thumbnail: "$prompt.thumbnail",
+                                category: "$prompt.category",
+                                aiTool: "$prompt.aiTool",
+                                difficulty: "$prompt.difficulty",
+                                visibility: "$prompt.visibility",
+                                creatorId: "$prompt.creatorId",
+                            },
+                        },
+                    },
+
+                    {
+                        $sort: {
+                            createdAt: -1,
+                        },
+                    },
+                ]).toArray();
+
+                res.send(reviews);
+
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to fetch received reviews",
+                });
+            }
+        });
+
+        app.patch("/api/reviews/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { userId, rating, comment } = req.body;
+
+                const review = await reviewsCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+
+                if (!review) {
+                    return res.status(404).send({
+                        success: false,
+                        message: "Review not found",
+                    });
+                }
+
+                if (review.userId !== userId) {
+                    return res.status(403).send({
+                        success: false,
+                        message: "Unauthorized",
+                    });
+                }
+
+                await reviewsCollection.updateOne(
+                    {
+                        _id: new ObjectId(id),
+                    },
+                    {
+                        $set: {
+                            rating,
+                            comment,
+                            updatedAt: new Date(),
+                        },
+                    }
+                );
+
+                res.send({
+                    success: true,
+                    message: "Review updated successfully",
+                });
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to update review",
+                });
+            }
+        });
+
+        app.delete("/api/reviews/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { userId } = req.body;
+
+                const review = await reviewsCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+
+                if (!review) {
+                    return res.status(404).send({
+                        success: false,
+                        message: "Review not found",
+                    });
+                }
+
+                if (review.userId !== userId) {
+                    return res.status(403).send({
+                        success: false,
+                        message: "Unauthorized",
+                    });
+                }
+
+                await reviewsCollection.deleteOne({
+                    _id: new ObjectId(id),
+                });
+
+                res.send({
+                    success: true,
+                    message: "Review deleted successfully",
+                });
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to delete review",
+                });
+            }
+        });
 
         //report post 
         app.post("/api/reports", async (req, res) => {
@@ -784,6 +1091,225 @@ async function server() {
                 }
             );
             res.send(subscription);
+        });
+
+
+        app.get("/api/dashboard/creator-stats/:creatorId", async (req, res) => {
+            try {
+                const { creatorId } = req.params;
+
+                const prompts = await promptsCollection
+                    .find({ creatorId })
+                    .toArray();
+
+                const totalPrompts = prompts.length;
+
+                const totalCopies = prompts.reduce(
+                    (sum, prompt) => sum + (prompt.copyCount || 0),
+                    0
+                );
+
+                const totalBookmarks = prompts.reduce(
+                    (sum, prompt) => sum + (prompt.bookmarkCount || 0),
+                    0
+                );
+
+                const totalRatings = prompts.reduce(
+                    (sum, prompt) => sum + (prompt.totalRatings || 0),
+                    0
+                );
+
+                const ratingSum = prompts.reduce(
+                    (sum, prompt) =>
+                        sum + (prompt.rating || 0) * (prompt.totalRatings || 0),
+                    0
+                );
+
+                const averageRating =
+                    totalRatings > 0
+                        ? Number((ratingSum / totalRatings).toFixed(1))
+                        : 0;
+
+                res.send({
+                    totalPrompts,
+                    totalCopies,
+                    totalBookmarks,
+                    averageRating,
+                });
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to fetch creator analytics",
+                });
+            }
+        });
+
+        app.get("/api/dashboard/performance/:creatorId", async (req, res) => {
+            try {
+                const { creatorId } = req.params;
+
+                const performance = await promptsCollection
+                    .find(
+                        { creatorId },
+                        {
+                            projection: {
+                                title: 1,
+                                copyCount: 1,
+                                bookmarkCount: 1,
+                            },
+                        }
+                    )
+                    .sort({ copyCount: -1 })
+                    .limit(10)
+                    .toArray();
+
+                res.send(performance);
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to fetch performance data",
+                });
+            }
+        });
+
+        app.get("/api/dashboard/growth/:creatorId", async (req, res) => {
+            try {
+                const { creatorId } = req.params;
+
+                const growth = await promptsCollection.aggregate([
+                    {
+                        $match: {
+                            creatorId,
+                        },
+                    },
+
+                    {
+                        $addFields: {
+                            createdDate: {
+                                $dateFromString: {
+                                    dateString: "$createdAt",
+                                },
+                            },
+                        },
+                    },
+
+                    {
+                        $group: {
+                            _id: {
+                                year: { $year: "$createdDate" },
+                                month: { $month: "$createdDate" },
+                            },
+                            prompts: {
+                                $sum: 1,
+                            },
+                        },
+                    },
+
+                    {
+                        $sort: {
+                            "_id.year": 1,
+                            "_id.month": 1,
+                        },
+                    },
+                ]).toArray();
+
+                const monthNames = [
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                ];
+
+                const formattedGrowth = growth.map((item) => ({
+                    name: `${monthNames[item._id.month - 1]} ${item._id.year}`,
+                    prompts: item.prompts,
+                }));
+
+                res.send(formattedGrowth);
+
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to fetch growth analytics",
+                    error: error.message,
+                });
+            }
+        });
+
+        app.get("/api/dashboard/top-prompts/:creatorId", async (req, res) => {
+            try {
+                const { creatorId } = req.params;
+
+                const [
+                    mostCopied,
+                    mostBookmarked,
+                    highestRated,
+                ] = await Promise.all([
+                    promptsCollection.findOne(
+                        { creatorId },
+                        {
+                            sort: { copyCount: -1 },
+                        }
+                    ),
+
+                    promptsCollection.findOne(
+                        { creatorId },
+                        {
+                            sort: { bookmarkCount: -1 },
+                        }
+                    ),
+
+                    promptsCollection.findOne(
+                        { creatorId },
+                        {
+                            sort: {
+                                rating: -1,
+                                totalRatings: -1,
+                            },
+                        }
+                    ),
+                ]);
+
+                res.send({
+                    mostCopied,
+                    mostBookmarked,
+                    highestRated,
+                });
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to fetch top prompts",
+                });
+            }
+        });
+
+
+        app.get("/api/admin/transactions", async (req, res) => {
+            try {
+                const transactions = await transactionsCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.status(200).json({
+                    success: true,
+                    total: transactions.length,
+                    transactions,
+                });
+            } catch (error) {
+                console.error(error);
+
+                res.status(500).json({
+                    success: false,
+                    message: "Internal Server Error",
+                });
+            }
         });
 
         // Send a ping to confirm a successful connection
